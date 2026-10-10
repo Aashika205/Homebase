@@ -1,0 +1,213 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DailyBudget — Personal Finance Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+:root{--bg:#f4f6fb;--card:#fff;--tx:#0f1b3d;--mu:#5d6b88;--pr:#12306b;--g:#12a150;--r:#d92d20;--w:#d98a00;--b:#e1e6f0}
+[data-theme=dark]{--bg:#0b1220;--card:#131c30;--tx:#e8edf7;--mu:#9aa6bd;--pr:#6c9bff;--b:#243049}
+*{box-sizing:border-box}body{margin:0;font:16px/1.45 system-ui,sans-serif;background:var(--bg);color:var(--tx)}
+h1,h2,h3{margin:.2em 0}.mu{color:var(--mu)}.g{color:var(--g)}.r{color:var(--r)}
+button,.btn{background:var(--pr);color:#fff;border:0;border-radius:8px;padding:.6em 1em;font:inherit;cursor:pointer}
+[data-theme=dark] button{color:#0b1220}button.sec{background:transparent;color:var(--pr);border:1px solid var(--pr)}button.dng{background:var(--r);color:#fff}button.sm{padding:.25em .6em;font-size:.85em}
+input,select{width:100%;padding:.55em;border:1px solid var(--b);border-radius:8px;background:var(--card);color:var(--tx);font:inherit}
+label{display:block;margin:.5em 0;font-size:.9em;color:var(--mu)}:focus-visible{outline:3px solid var(--pr);outline-offset:2px}
+.card{background:var(--card);border:1px solid var(--b);border-radius:12px;padding:1em;margin-bottom:1em}
+.grid{display:grid;gap:1em;grid-template-columns:repeat(auto-fit,minmax(170px,1fr))}.grid2{display:grid;gap:1em;grid-template-columns:repeat(auto-fit,minmax(300px,1fr))}
+.kpi b{display:block;font-size:1.5em}.row{display:flex;gap:.5em;flex-wrap:wrap;align-items:center}.row>*{flex:0 1 auto}.sp{justify-content:space-between}
+.shell{display:flex;min-height:100vh}nav{width:210px;background:var(--card);border-right:1px solid var(--b);padding:1em;position:sticky;top:0;height:100vh}
+nav button{display:block;width:100%;text-align:left;background:none;color:var(--tx);margin:.15em 0}nav button.on{background:var(--pr);color:#fff}
+[data-theme=dark] nav button.on{color:#0b1220}main{flex:1;padding:1.2em;max-width:1100px;min-width:0}
+.bar{height:12px;background:var(--b);border-radius:6px;overflow:hidden}.bar i{display:block;height:100%;background:var(--g)}.bar i.w{background:var(--w)}.bar i.o{background:var(--r)}
+.alert{padding:.6em .8em;border-radius:8px;margin:.5em 0;background:#fff4d6;color:#5a3d00}.alert.o{background:#fde4e1;color:#7a1a12}
+table{width:100%;border-collapse:collapse}td,th{padding:.5em;border-bottom:1px solid var(--b);text-align:left}.tw{overflow-x:auto}
+dialog{border:1px solid var(--b);border-radius:12px;background:var(--card);color:var(--tx);width:min(430px,94vw)}dialog::backdrop{background:#0008}
+.err{color:var(--r);min-height:1.2em}#toast{position:fixed;right:1em;top:1em;background:var(--g);color:#fff;padding:.7em 1em;border-radius:8px;z-index:99;display:none}#toast.e{background:var(--r)}
+.land{max-width:760px;margin:auto;padding:1.5em}.tag{display:inline-block;padding:.1em .6em;border-radius:99px;background:var(--b);font-size:.8em}
+@media(max-width:800px){.shell{display:block}nav{position:fixed;bottom:0;left:0;right:0;top:auto;width:auto;height:auto;display:flex;overflow-x:auto;padding:.3em;z-index:5}nav .brand{display:none}nav button{width:auto;white-space:nowrap}main{padding:.8em .8em 5em}}
+</style></head><body>
+<div id="toast" role="status"></div><div id="app"></div>
+<script>
+/* ===== CONFIG: paste your Supabase project URL and PUBLIC (publishable/anon) key. Never the service-role key. ===== */
+const CFG={url:'YOUR_SUPABASE_URL',key:'YOUR_SUPABASE_PUBLISHABLE_KEY'};
+const sb=supabase.createClient(CFG.url,CFG.key);
+const EXP=['Rent or mortgage','Groceries','Restaurants','Transportation','Fuel','Utilities','Phone and internet','Healthcare','Education','Shopping','Family expenses','Insurance','Debt payments','Subscriptions','Entertainment','Other expenses'];
+const INC=['Salary','Business income','Freelance','Gifts','Refunds','Other income'];
+const PAY=['Cash','Debit card','Credit card','Bank transfer','Other'];
+const KIND={'Rent':'Rent or mortgage','Utilities':'Utilities','Phone and internet':'Phone and internet','Insurance':'Insurance','Loan payment':'Debt payments','Credit card bill':null,'Subscription':'Subscriptions','Other':'Other expenses'};
+const CUR=['USD','EUR','GBP','CAD','AUD','INR','JPY','PKR'];
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sum=(a,f=x=>x.amount)=>a.reduce((s,x)=>s+Number(f(x)),0);
+const today=()=>new Date().toLocaleDateString('en-CA');
+const S={user:null,tab:'dashboard',tx:[],budgets:[],bills:[],goals:[],prefs:{currency:'USD',daily_limit:0,rollover:false},f:{q:'',type:'',from:'',to:'',sort:'date_desc'},bm:today().slice(0,7),r:{from:today().slice(0,8)+'01',to:today()}};
+const money=n=>new Intl.NumberFormat(undefined,{style:'currency',currency:S.prefs.currency}).format(n||0);
+const logo='<svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="15" fill="#12306b"/><path d="M11 8h6a8 8 0 010 16h-6z" fill="none" stroke="#2fd17a" stroke-width="3"/></svg>';
+(function(){const t=localStorage.getItem('db_theme')||(matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light');document.documentElement.dataset.theme=t})();
+function toast(m,e){const t=$('#toast');t.textContent=m;t.className=e?'e':'';t.style.display='block';clearTimeout(toast.h);toast.h=setTimeout(()=>t.style.display='none',3500)}
+const valDate=s=>/^\d{4}-\d{2}-\d{2}$/.test(s)&&!isNaN(new Date(s+'T00:00:00Z'))&&new Date(s+'T00:00:00Z').toISOString().slice(0,10)===s;
+
+/* ---------- generic modal form with validation ---------- */
+function form(title,fields,v,cb){
+  const d=document.createElement('dialog');
+  d.innerHTML=`<form class="fm"><h3>${esc(title)}</h3>${fields.map(f=>`<label>${esc(f.l)}${f.t==='select'?`<select name="${f.k}">${f.o.map(o=>`<option ${String(o)===String(v[f.k])?'selected':''}>${esc(o)}</option>`).join('')}</select>`:`<input name="${f.k}" type="${f.t}" ${f.t==='number'?'step="0.01" inputmode="decimal"':''} maxlength="200" value="${esc(v[f.k]??'')}">`}</label>`).join('')}<p class="err" role="alert"></p><div class="row"><button>Save</button><button type="button" class="sec" data-x>Cancel</button></div></form>`;
+  document.body.append(d);d.showModal();
+  d.querySelector('[data-x]').onclick=()=>{d.close();d.remove()};
+  d.querySelector('form').onsubmit=async e=>{e.preventDefault();const o={},fd=new FormData(e.target);
+    for(const f of fields){let x=(fd.get(f.k)||'').trim();
+      if(f.req&&!x)return d.querySelector('.err').textContent=f.l+' is required.';
+      if(f.t==='number'&&x!==''){const n=Number(x);if(!Number.isFinite(n)||n<(f.pos?0.01:0)||n>=1e10)return d.querySelector('.err').textContent=f.l+' must be a valid '+(f.pos?'positive ':'')+'amount.';x=Math.round(n*100)/100}
+      if(f.t==='date'&&x!==''&&!valDate(x))return d.querySelector('.err').textContent=f.l+' must be a valid date.';
+      o[f.k]=x===''?null:x}
+    const er=await cb(o);if(er)d.querySelector('.err').textContent=er;else{d.close();d.remove()}}}
+
+/* ---------- data layer (RLS enforces ownership server-side) ---------- */
+async function load(){
+  const q=t=>sb.from(t).select('*');
+  const R=await Promise.all([q('transactions').order('tx_date',{ascending:false}),q('budgets'),q('bills').order('due_date'),q('goals'),q('preferences').maybeSingle()]);
+  if(R.some(r=>r.error)){toast('Could not load your data. Check your connection and setup.',1);return false}
+  [S.tx,S.budgets,S.bills,S.goals]=R.slice(0,4).map(r=>r.data);
+  if(R[4].data)S.prefs=R[4].data;return true}
+async function save(table,vals,id){
+  const r=id?await sb.from(table).update(vals).eq('id',id):await sb.from(table).insert({...vals,user_id:S.user.id});
+  if(r.error)return r.error.code==='23505'?'That record already exists.':'Could not save. Please check your input and try again.';
+  toast('Saved');await load();render();return null}
+async function del(table,id){if(!confirm('Delete this record? This cannot be undone.'))return;
+  const r=await sb.from(table).delete().eq('id',id);if(r.error)return toast('Could not delete.',1);toast('Deleted');await load();render()}
+
+/* ---------- calculations ---------- */
+const exp=a=>a.filter(x=>x.type==='expense'),inc=a=>a.filter(x=>x.type==='income');
+function daily(){ // available = limit + rollover (unused amounts of earlier days THIS month, if enabled); remaining = available - today's expenses
+  const L=Number(S.prefs.daily_limit)||0,t=today(),m=t.slice(0,7);let roll=0;
+  if(S.prefs.rollover&&L>0)for(let i=1;i<Number(t.slice(8));i++){const d=m+'-'+String(i).padStart(2,'0');roll+=Math.max(0,L-sum(exp(S.tx).filter(x=>x.tx_date===d)))}
+  const spent=sum(exp(S.tx).filter(x=>x.tx_date===t)),avail=L+roll;
+  return{L,roll,avail,spent,rem:avail-spent,pct:avail>0?spent/avail*100:0}}
+const bar=p=>`<div class="bar" role="progressbar" aria-valuenow="${Math.min(100,Math.round(p))}" aria-valuemin="0" aria-valuemax="100"><i class="${p>100?'o':p>=80?'w':''}" style="width:${Math.min(100,p)}%"></i></div>`;
+function warn(p,spent,avail){if(avail<=0)return'';
+  if(spent>avail)return`<div class="alert o">You have exceeded your budget by ${money(spent-avail)}.</div>`;
+  if(p>=100)return'<div class="alert o">You have reached 100% of your budget.</div>';
+  if(p>=80)return'<div class="alert">80% of your budget is used.</div>';
+  if(p>=50)return'<div class="alert">50% of your budget is used.</div>';return''}
+const byCat=a=>{const m={};exp(a).forEach(x=>m[x.category]=(m[x.category]||0)+Number(x.amount));return m};
+const nextDue=(d,r)=>{const t=new Date(d+'T00:00:00Z');if(r==='weekly')t.setUTCDate(t.getUTCDate()+7);else if(r==='monthly')t.setUTCMonth(t.getUTCMonth()+1);else if(r==='annually')t.setUTCFullYear(t.getUTCFullYear()+1);return t.toISOString().slice(0,10)};
+const txRow=x=>`<tr><td>${esc(x.tx_date)}</td><td>${esc(x.description||x.category)}<br><span class="mu">${esc(x.category)} · ${esc(x.payment_method)}${x.essential?'':' · non-essential'}</span></td><td class="${x.type==='income'?'g':''}">${x.type==='income'?'+':'−'}${money(x.amount)}</td><td class="row"><button class="sm sec" data-act="edtx" data-id="${x.id}" aria-label="Edit">Edit</button><button class="sm dng" data-act="deltx" data-id="${x.id}" aria-label="Delete">Delete</button></td></tr>`;
+const empty=m=>`<p class="mu">${m}</p>`;
+
+/* ---------- views ---------- */
+function dashboard(){
+  const t=today(),m=t.slice(0,7),mt=S.tx.filter(x=>x.tx_date.startsWith(m)),dt=S.tx.filter(x=>x.tx_date===t),d=daily();
+  const up=S.bills.filter(b=>b.status==='pending').sort((a,b)=>a.due_date<b.due_date?-1:1).slice(0,5);
+  return`<h2>Dashboard</h2><div class="grid"><div class="card kpi"><span class="mu">Cash balance (income − expenses)</span><b>${money(sum(inc(S.tx))-sum(exp(S.tx)))}</b></div>
+<div class="card kpi"><span class="mu">Remaining today</span><b class="${d.rem<0?'r':''}">${d.L?money(d.rem):'Set a limit'}</b></div>
+<div class="card kpi"><span class="mu">Today income / expenses</span><b><span class="g">${money(sum(inc(dt)))}</span> / ${money(sum(exp(dt)))}</b></div>
+<div class="card kpi"><span class="mu">This month income / expenses</span><b><span class="g">${money(sum(inc(mt)))}</span> / ${money(sum(exp(mt)))}</b></div>
+<div class="card kpi"><span class="mu">Net this month</span><b class="${sum(inc(mt))-sum(exp(mt))<0?'r':'g'}">${money(sum(inc(mt))-sum(exp(mt)))}</b></div>
+<div class="card kpi"><span class="mu">Savings goals (self-reported, not bank-verified)</span><b class="g">${money(sum(S.goals,g=>g.saved_amount))}</b></div></div>
+${d.L?`<div class="card"><b>Daily budget: ${d.pct.toFixed(0)}% used</b> of ${money(d.avail)}${d.roll?` <span class="mu">(incl. ${money(d.roll)} rollover)</span>`:''}${bar(d.pct)}${warn(d.pct,d.spent,d.avail)}</div>`:''}
+<div class="grid2"><div class="card"><h3>Spending by category (month)</h3><canvas id="c1" height="200"></canvas></div><div class="card"><h3>Income vs expenses (6 months)</h3><canvas id="c2" height="200"></canvas></div></div>
+<div class="card"><h3>Daily spending (this month)</h3><canvas id="c3" height="120"></canvas></div>
+<div class="grid2"><div class="card"><h3>Upcoming bills</h3>${up.length?up.map(b=>`<div class="row sp"><span>${esc(b.name)} <span class="tag ${b.due_date<t?'r':''}">${b.due_date<t?'overdue':'due'} ${esc(b.due_date)}</span></span><b>${money(b.amount)}</b></div>`).join(''):empty('No pending bills.')}</div>
+<div class="card"><h3>Recent transactions</h3>${S.tx.length?`<div class="tw"><table>${S.tx.slice(0,5).map(txRow).join('')}</table></div>`:empty('No transactions yet. Add your first one on the Transactions page.')}</div></div>`}
+function dashCharts(){
+  const t=today(),m=t.slice(0,7),c=byCat(S.tx.filter(x=>x.tx_date.startsWith(m)));
+  chart('c1',{type:'doughnut',data:{labels:Object.keys(c),datasets:[{data:Object.values(c)}]}});
+  const ms=[];for(let i=5;i>=0;i--){const d=new Date();d.setDate(1);d.setMonth(d.getMonth()-i);ms.push(d.toLocaleDateString('en-CA').slice(0,7))}
+  chart('c2',{type:'bar',data:{labels:ms,datasets:[{label:'Income',backgroundColor:'#12a150',data:ms.map(k=>sum(inc(S.tx.filter(x=>x.tx_date.startsWith(k)))))},{label:'Expenses',backgroundColor:'#12306b',data:ms.map(k=>sum(exp(S.tx.filter(x=>x.tx_date.startsWith(k)))))}]}});
+  const n=Number(t.slice(8)),ds=[...Array(n)].map((_,i)=>m+'-'+String(i+1).padStart(2,'0'));
+  chart('c3',{type:'line',data:{labels:ds.map(x=>x.slice(8)),datasets:[{label:'Spent',borderColor:'#12306b',data:ds.map(k=>sum(exp(S.tx).filter(x=>x.tx_date===k)))}]}})}
+function chart(id,cfg){const el=document.getElementById(id);if(!el)return;Chart.getChart(el)?.destroy();cfg.options={responsive:true,...cfg.options};new Chart(el,cfg)}
+
+function filtered(){const f=S.f,q=f.q.toLowerCase();
+  let a=S.tx.filter(x=>(!f.type||x.type===f.type)&&(!f.from||x.tx_date>=f.from)&&(!f.to||x.tx_date<=f.to)&&(!q||(x.description||'').toLowerCase().includes(q)||x.category.toLowerCase().includes(q)||(x.notes||'').toLowerCase().includes(q)));
+  const k={date_desc:(a,b)=>a.tx_date<b.tx_date?1:-1,date_asc:(a,b)=>a.tx_date>b.tx_date?1:-1,amt_desc:(a,b)=>b.amount-a.amount,amt_asc:(a,b)=>a.amount-b.amount};return a.sort(k[f.sort])}
+function listHTML(){const a=filtered();return a.length?`<div class="tw"><table>${a.map(txRow).join('')}</table></div><p class="mu">${a.length} shown · income ${money(sum(inc(a)))} · expenses ${money(sum(exp(a)))}</p>`:empty(S.tx.length?'No transactions match your filters.':'No transactions yet — click “Add transaction”.')}
+function transactions(){const f=S.f;return`<div class="row sp"><h2>Transactions</h2><button data-act="addtx">+ Add transaction</button></div>
+<div class="card grid"><label>Search<input id="fq" value="${esc(f.q)}"></label><label>Type<select id="ft"><option value="">All</option><option ${f.type==='income'?'selected':''}>income</option><option ${f.type==='expense'?'selected':''}>expense</option></select></label><label>From<input type="date" id="ff" value="${f.from}"></label><label>To<input type="date" id="fo" value="${f.to}"></label><label>Sort<select id="fs">${[['date_desc','Newest'],['date_asc','Oldest'],['amt_desc','Largest'],['amt_asc','Smallest']].map(([v,l])=>`<option value="${v}" ${f.sort===v?'selected':''}>${l}</option>`).join('')}</select></label></div>
+<div class="card" id="txl">${listHTML()}</div>`}
+function txForm(x={}){form(x.id?'Edit transaction':'Add transaction',[{k:'type',l:'Type',t:'select',o:['expense','income']},{k:'amount',l:'Amount',t:'number',req:1,pos:1},{k:'tx_date',l:'Date',t:'date',req:1},{k:'category',l:'Category',t:'select',o:[...EXP,...INC]},{k:'description',l:'Description',t:'text'},{k:'payment_method',l:'Payment method',t:'select',o:PAY},{k:'essential',l:'Essential?',t:'select',o:['yes','no']},{k:'notes',l:'Notes (optional)',t:'text'}],
+  {type:'expense',tx_date:today(),payment_method:'Cash',essential:'no',...x,essential:x.id?(x.essential?'yes':'no'):'no'},
+  async v=>{if(!(v.type==='income'?INC:EXP).includes(v.category))return`Choose a ${v.type} category.`;
+    return save('transactions',{...v,currency:S.prefs.currency,essential:v.essential==='yes'},x.id)})}
+
+function budgets(){const d=daily(),m=S.bm,c=byCat(S.tx.filter(x=>x.tx_date.startsWith(m))),rows=S.budgets.filter(b=>b.month===m);
+  return`<h2>Budgets</h2><div class="card"><h3>Daily budget</h3><p>Limit: <b>${money(d.L)}</b> · Rollover: <b>${S.prefs.rollover?'on':'off'}</b> <button class="sm sec" data-act="daily">Change</button></p>${d.L?`<p>Spent today ${money(d.spent)} · Remaining ${money(d.rem)} · ${d.pct.toFixed(0)}% used</p>${bar(d.pct)}${warn(d.pct,d.spent,d.avail)}<p class="mu">Rollover = unused daily budget from earlier days of this month (resets monthly). Available = limit + rollover.</p>`:empty('Set a daily limit to track your progress.')}</div>
+<div class="card"><div class="row sp"><h3>Category budgets</h3><span class="row"><input type="month" id="bm" value="${m}" aria-label="Month"><button data-act="addbud">+ Add</button></span></div>
+${rows.length?`<div class="tw"><table><tr><th>Category</th><th>Planned</th><th>Actual</th><th>Left</th><th>Used</th><th></th></tr>${rows.map(b=>{const a=c[b.category]||0,p=b.amount>0?a/b.amount*100:0;return`<tr><td>${esc(b.category)}</td><td>${money(b.amount)}</td><td>${money(a)}</td><td class="${a>b.amount?'r':''}">${money(b.amount-a)}</td><td style="min-width:110px">${p.toFixed(0)}% ${p>100?'<span class="r">over</span>':p>=80?'<span class="tag">warning</span>':''}${bar(p)}</td><td class="row"><button class="sm sec" data-act="edbud" data-id="${b.id}">Edit</button><button class="sm dng" data-act="delbud" data-id="${b.id}">Delete</button></td></tr>`}).join('')}</table></div>`:empty('No category budgets for this month.')}</div>`}
+function bills(){const t=today(),g=(f)=>S.bills.filter(f);
+  const sec=(h,a)=>`<div class="card"><h3>${h}</h3>${a.length?a.map(b=>`<div class="row sp" style="padding:.4em 0"><span>${esc(b.name)} <span class="tag">${esc(b.kind)}</span> <span class="mu">due ${esc(b.due_date)} · ${esc(b.recurrence)}</span></span><span class="row"><b>${money(b.amount)}</b>${b.status==='pending'?`<button class="sm" data-act="pay" data-id="${b.id}">Mark paid</button>`:''}<button class="sm sec" data-act="edbill" data-id="${b.id}">Edit</button><button class="sm dng" data-act="delbill" data-id="${b.id}">Delete</button></span></div>`).join(''):empty('None.')}</div>`;
+  return`<div class="row sp"><h2>Bills</h2><button data-act="addbill">+ Add bill</button></div>${sec('Overdue',g(b=>b.status==='pending'&&b.due_date<t))}${sec('Upcoming',g(b=>b.status==='pending'&&b.due_date>=t))}${sec('Paid',g(b=>b.status==='paid'))}<p class="mu">Marking a bill paid can record one linked expense (never automatic). Credit-card bills don’t create an expense, so purchases aren’t counted twice.</p>`}
+async function pay(b){
+  if(KIND[b.kind]!==null&&confirm(`Also record ${money(b.amount)} as an expense dated today?`)){
+    const r=await sb.from('transactions').insert({user_id:S.user.id,type:'expense',amount:b.amount,currency:S.prefs.currency,tx_date:today(),category:KIND[b.kind]||'Other expenses',description:b.name,payment_method:'Other',essential:true,bill_id:b.id});
+    if(r.error)return toast(r.error.code==='23505'?'Already recorded today.':'Could not record the expense.',1)}
+  const r=await sb.from('bills').update(b.recurrence!=='none'?{due_date:nextDue(b.due_date,b.recurrence),status:'pending'}:{status:'paid'}).eq('id',b.id);
+  if(r.error)return toast('Could not update the bill.',1);toast('Bill updated');await load();render()}
+function billForm(x={}){form(x.id?'Edit bill':'Add bill',[{k:'name',l:'Name',t:'text',req:1},{k:'kind',l:'Type',t:'select',o:Object.keys(KIND)},{k:'amount',l:'Amount',t:'number',req:1,pos:1},{k:'due_date',l:'Due date',t:'date',req:1},{k:'recurrence',l:'Recurrence',t:'select',o:['none','weekly','monthly','annually']},{k:'status',l:'Status',t:'select',o:['pending','paid']},{k:'notes',l:'Notes',t:'text'}],{kind:'Rent',recurrence:'monthly',status:'pending',due_date:today(),...x},v=>save('bills',v,x.id))}
+function goals(){return`<div class="row sp"><h2>Savings goals</h2><button data-act="addgoal">+ Add goal</button></div><p class="mu">Goals are amounts you track yourself. They are not verified by any bank and are not subtracted from your cash balance.</p>
+${S.goals.length?`<div class="grid2">${S.goals.map(g=>{const p=g.target_amount>0?g.saved_amount/g.target_amount*100:0;return`<div class="card"><h3>${esc(g.name)}</h3><p class="mu">${esc(g.description||'')}</p>${bar(Math.min(100,p))}<p><b>${p.toFixed(0)}%</b> · saved ${money(g.saved_amount)} of ${money(g.target_amount)} · left ${money(Math.max(0,g.target_amount-g.saved_amount))}${g.target_date?` · by ${esc(g.target_date)}`:''}</p><div class="row"><button class="sm" data-act="fund" data-id="${g.id}">Add funds</button><button class="sm sec" data-act="edgoal" data-id="${g.id}">Edit</button><button class="sm dng" data-act="delgoal" data-id="${g.id}">Delete</button></div></div>`}).join('')}</div>`:empty('No goals yet. Try “Emergency fund”.')}`}
+function goalForm(x={}){form(x.id?'Edit goal':'Add goal',[{k:'name',l:'Goal name (e.g. Emergency fund)',t:'text',req:1},{k:'target_amount',l:'Target amount',t:'number',req:1,pos:1},{k:'saved_amount',l:'Saved so far',t:'number'},{k:'target_date',l:'Target date',t:'date'},{k:'description',l:'Description',t:'text'}],{saved_amount:0,...x},v=>save('goals',{...v,saved_amount:v.saved_amount||0},x.id))}
+
+function reports(){const r=S.r,a=S.tx.filter(x=>x.tx_date>=r.from&&x.tx_date<=r.to);
+  return`<div class="row sp"><h2>Reports</h2><button data-act="csvr">Export CSV</button></div><div class="card row"><label>From<input type="date" id="rf" value="${r.from}"></label><label>To<input type="date" id="rt" value="${r.to}"></label></div>
+<div class="grid"><div class="card kpi"><span class="mu">Income</span><b class="g">${money(sum(inc(a)))}</b></div><div class="card kpi"><span class="mu">Expenses</span><b>${money(sum(exp(a)))}</b></div><div class="card kpi"><span class="mu">Net</span><b>${money(sum(inc(a))-sum(exp(a)))}</b></div></div>
+<div class="grid2"><div class="card"><h3>Spending by category</h3><canvas id="r1" height="200"></canvas></div><div class="card"><h3>Budget vs actual (month of “To” date)</h3><canvas id="r2" height="200"></canvas></div></div>
+<div class="card"><h3>Daily expenses</h3><canvas id="r3" height="120"></canvas></div><div class="card"><h3>Savings goal progress</h3><canvas id="r4" height="120"></canvas></div>`}
+function repCharts(){const r=S.r,a=S.tx.filter(x=>x.tx_date>=r.from&&x.tx_date<=r.to),c=byCat(a);
+  chart('r1',{type:'doughnut',data:{labels:Object.keys(c),datasets:[{data:Object.values(c)}]}});
+  const m=r.to.slice(0,7),bs=S.budgets.filter(b=>b.month===m),mc=byCat(S.tx.filter(x=>x.tx_date.startsWith(m)));
+  chart('r2',{type:'bar',data:{labels:bs.map(b=>b.category),datasets:[{label:'Planned',backgroundColor:'#12306b',data:bs.map(b=>b.amount)},{label:'Actual',backgroundColor:'#12a150',data:bs.map(b=>mc[b.category]||0)}]}});
+  const dm={};exp(a).forEach(x=>dm[x.tx_date]=(dm[x.tx_date]||0)+Number(x.amount));const ks=Object.keys(dm).sort();
+  chart('r3',{type:'bar',data:{labels:ks,datasets:[{label:'Expenses',backgroundColor:'#12306b',data:ks.map(k=>dm[k])}]}});
+  chart('r4',{type:'bar',data:{labels:S.goals.map(g=>g.name),datasets:[{label:'Saved',backgroundColor:'#12a150',data:S.goals.map(g=>g.saved_amount)},{label:'Target',backgroundColor:'#9aa6bd',data:S.goals.map(g=>g.target_amount)}]}})}
+const cell=v=>{let s=String(v??'');if(/^[=+\-@\t\r]/.test(s))s="'"+s;return'"'+s.replace(/"/g,'""')+'"'};
+function csv(rows,name){const h=['date','type','category','amount','currency','description','payment_method','essential','notes'];
+  const t=[h.join(','),...rows.map(x=>[x.tx_date,x.type,x.category,x.amount,x.currency,x.description,x.payment_method,x.essential?'yes':'no',x.notes].map(cell).join(','))].join('\r\n');
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([t],{type:'text/csv'}));a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
+function settings(){return`<h2>Settings</h2><div class="card"><p><b>Account:</b> ${esc(S.user.email)}</p><label>Currency<select id="cur">${CUR.map(c=>`<option ${c===S.prefs.currency?'selected':''}>${c}</option>`).join('')}</select></label>
+<p class="row"><button data-act="daily" class="sec">Daily limit &amp; rollover</button><button data-act="theme" class="sec">Toggle light/dark</button><button data-act="csva" class="sec">Export all transactions (CSV)</button><button data-act="out">Log out</button></p></div>
+<div class="card"><h3>Delete account</h3><p class="mu">Permanently deletes your account and all your data. Export a CSV first.</p><button class="dng" data-act="delacct">Delete my account</button></div>
+<p class="mu">Privacy: your data is stored in your private Supabase database and protected by row-level security. It is never sent to AI services.</p>`}
+function dailyForm(){form('Daily budget',[{k:'daily_limit',l:'Daily spending limit',t:'number'},{k:'rollover',l:'Roll over unused budget?',t:'select',o:['no','yes']}],{daily_limit:S.prefs.daily_limit,rollover:S.prefs.rollover?'yes':'no'},
+  async v=>{const r=await sb.from('preferences').upsert({user_id:S.user.id,currency:S.prefs.currency,daily_limit:v.daily_limit||0,rollover:v.rollover==='yes'});if(r.error)return'Could not save.';toast('Saved');await load();render()})}
+
+/* ---------- shell, events ---------- */
+const TABS=[['dashboard','Dashboard'],['transactions','Transactions'],['budgets','Budgets'],['bills','Bills'],['goals','Goals'],['reports','Reports'],['settings','Settings']];
+function render(){if(!S.user)return;const V={dashboard,transactions,budgets,bills,goals,reports,settings};
+  $('#app').innerHTML=`<div class="shell"><nav aria-label="Main"><div class="brand row">${logo}<b>DailyBudget</b></div>${TABS.map(([k,l])=>`<button class="${S.tab===k?'on':''}" data-act="nav" data-t="${k}">${l}</button>`).join('')}</nav><main>${V[S.tab]()}</main></div>`;
+  setTimeout(()=>({dashboard:dashCharts,reports:repCharts})[S.tab]?.())}
+const find=(a,id)=>S[a].find(x=>x.id===id);
+const H={nav:b=>{S.tab=b.dataset.t;render()},addtx:()=>txForm(),edtx:b=>txForm(find('tx',b.dataset.id)),deltx:b=>del('transactions',b.dataset.id),
+  addbud:()=>budForm(),edbud:b=>budForm(find('budgets',b.dataset.id)),delbud:b=>del('budgets',b.dataset.id),daily:dailyForm,
+  addbill:()=>billForm(),edbill:b=>billForm(find('bills',b.dataset.id)),delbill:b=>del('bills',b.dataset.id),pay:b=>pay(find('bills',b.dataset.id)),
+  addgoal:()=>goalForm(),edgoal:b=>goalForm(find('goals',b.dataset.id)),delgoal:b=>del('goals',b.dataset.id),
+  fund:b=>{const g=find('goals',b.dataset.id);form('Add funds to '+g.name,[{k:'a',l:'Amount to add',t:'number',req:1,pos:1}],{},v=>save('goals',{saved_amount:Math.round((Number(g.saved_amount)+v.a)*100)/100},g.id))},
+  theme:()=>{const t=document.documentElement.dataset.theme==='dark'?'light':'dark';document.documentElement.dataset.theme=t;localStorage.setItem('db_theme',t)},
+  csvr:()=>csv(S.tx.filter(x=>x.tx_date>=S.r.from&&x.tx_date<=S.r.to),'dailybudget-report.csv'),csva:()=>csv(S.tx,'dailybudget-all.csv'),
+  out:()=>sb.auth.signOut(),
+  delacct:async()=>{if(!confirm('Permanently delete your account and ALL data?')||prompt('Type DELETE to confirm')!=='DELETE')return;const r=await sb.rpc('delete_my_account');if(r.error)return toast('Could not delete the account.',1);await sb.auth.signOut();toast('Account deleted')}};
+function budForm(x={}){form(x.id?'Edit budget':'Add category budget',[{k:'category',l:'Category',t:'select',o:EXP},{k:'amount',l:'Monthly limit',t:'number',req:1,pos:1}],x,v=>save('budgets',x.id?{category:v.category,amount:v.amount}:{...v,month:S.bm},x.id))}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-act]');if(b)H[b.dataset.act]?.(b)});
+document.addEventListener('change',async e=>{const i=e.target.id;
+  if(i==='cur'){const r=await sb.from('preferences').upsert({user_id:S.user.id,currency:e.target.value,daily_limit:S.prefs.daily_limit||0,rollover:!!S.prefs.rollover});if(r.error)return toast('Could not save.',1);await load();render()}
+  if(i==='bm'&&/^\d{4}-\d{2}$/.test(e.target.value)){S.bm=e.target.value;render()}
+  if(i==='rf'||i==='rt'){const k=i==='rf'?'from':'to';if(valDate(e.target.value))S.r[k]=e.target.value;render()}
+  if({ft:'type',ff:'from',fo:'to',fs:'sort'}[i]){S.f[{ft:'type',ff:'from',fo:'to',fs:'sort'}[i]]=e.target.value;$('#txl').innerHTML=listHTML()}});
+document.addEventListener('input',e=>{if(e.target.id==='fq'){S.f.q=e.target.value;$('#txl').innerHTML=listHTML()}});
+
+/* ---------- auth ---------- */
+function authView(msg){$('#app').innerHTML=`<div class="land"><div class="row">${logo}<h1>DailyBudget</h1></div><h2>Know what you can spend today.</h2><p>A simple, private budgeting dashboard. Enter your income and expenses by hand, set a daily limit, track bills and savings goals.</p>
+<ul><li>Daily &amp; monthly category budgets with warnings</li><li>Bills, savings goals, charts and CSV export</li><li>Your data is private to your account</li></ul>
+<form id="af" class="card"><h3>Log in or sign up</h3><label>Email<input type="email" id="em" required autocomplete="email"></label><label>Password (8+ characters)<input type="password" id="pw" minlength="8" autocomplete="current-password"></label><p class="err" role="alert">${esc(msg||'')}</p>
+<div class="row"><button type="submit">Log in</button><button type="button" class="sec" id="su">Sign up</button><button type="button" class="sec" id="fp">Forgot password</button></div></form>
+<p class="mu"><b>Privacy &amp; security:</b> Accounts and data use Supabase Auth and a Postgres database with row-level security. We never ask for bank passwords or card numbers, and your data is never sent to AI services. This website’s source code is public.</p></div>`;
+  const err=t=>$('.err').textContent=t,em=()=>$('#em').value.trim(),pw=()=>$('#pw').value;
+  $('#af').onsubmit=async e=>{e.preventDefault();const r=await sb.auth.signInWithPassword({email:em(),password:pw()});if(r.error)err('Login failed. Check your email and password (and confirm your email if required).')};
+  $('#su').onclick=async()=>{if(!em()||pw().length<8)return err('Enter an email and a password of at least 8 characters.');const r=await sb.auth.signUp({email:em(),password:pw(),options:{emailRedirectTo:location.origin+location.pathname}});
+    err(r.error?'Sign-up failed. Try a different email or a stronger password.':'Account created. If email confirmation is on, check your inbox, then log in.')};
+  $('#fp').onclick=async()=>{if(!em())return err('Enter your email first.');await sb.auth.resetPasswordForEmail(em(),{redirectTo:location.origin+location.pathname});err('If that email has an account, a reset link was sent.')}}
+function resetView(){$('#app').innerHTML=`<div class="land"><form id="rf2" class="card"><h3>Choose a new password</h3><label>New password<input type="password" id="np" minlength="8" required autocomplete="new-password"></label><p class="err" role="alert"></p><button>Update password</button></form></div>`;
+  $('#rf2').onsubmit=async e=>{e.preventDefault();const r=await sb.auth.updateUser({password:$('#np').value});if(r.error)return $('.err').textContent='Could not update the password.';toast('Password updated');history.replaceState(null,'',location.pathname);S.user=(await sb.auth.getUser()).data.user;boot()}}
+async function boot(){if(await load())render();else $('#app').innerHTML='<div class="land"><h2>Setup needed</h2><p>Could not load data. Make sure you ran supabase_setup.sql and set the URL and key in index.html.</p><button data-act="out">Log out</button></div>'}
+sb.auth.onAuthStateChange((ev,s)=>{if(ev==='PASSWORD_RECOVERY')return resetView();S.user=s?.user||null;
+  if(S.user)setTimeout(boot);else{Object.assign(S,{tx:[],budgets:[],bills:[],goals:[],tab:'dashboard'});authView(ev==='SIGNED_OUT'?'':'')}});
+</script></body></html>
